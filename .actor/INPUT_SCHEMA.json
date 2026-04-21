@@ -1,0 +1,89 @@
+{
+    "title": "Company News & Events Miner",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "company_name": {
+            "title": "Company Name",
+            "type": "string",
+            "description": "Name of the company to monitor (e.g. 'Salesforce', 'Stripe', 'OpenAI')",
+            "editor": "textfield",
+            "example": "Stripe"
+        },
+        "time_window": {
+            "title": "Time Window",
+            "type": "string",
+            "description": "How far back to look for news articles",
+            "editor": "select",
+            "enum": ["1d", "3d", "7d", "14d", "30d", "90d"],
+            "enumTitles": ["Last 24 hours", "Last 3 days", "Last 7 days", "Last 14 days", "Last 30 days", "Last 90 days"],
+            "default": "7d"
+        },
+        "intent_categories": {
+            "title": "Intent Categories",
+            "type": "array",
+            "description": "Which event types to track and classify",
+            "editor": "select",
+            "items": {
+                "type": "string",
+                "enum": ["expansion", "product_launch", "funding", "partnership", "compliance"]
+            },
+            "enumTitles": ["Expansion / M&A", "Product Launch", "Funding Rounds", "Partnership / Deals", "Compliance / Legal"],
+            "default": ["expansion", "product_launch", "funding", "partnership", "compliance"]
+        },
+        "max_results": {
+            "title": "Max Results",
+            "type": "integer",
+            "description": "Maximum number of events to return",
+            "editor": "number",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 500
+        },
+        "min_impact_score": {
+            "title": "Minimum Impact Score",
+            "type": "integer",
+            "description": "Only return events with this impact score or higher (1–10)",
+            "editor": "number",
+            "default": 3,
+            "minimum": 1,
+            "maximum": 10
+        },
+        "language": {
+            "title": "Language",
+            "type": "string",
+            "description": "Language code for news filtering",
+            "editor": "textfield",
+            "default": "en"
+        },
+        "NEWSAPI_KEY": {
+            "title": "NewsAPI Key (optional)",
+            "type": "string",
+            "description": "Free tier: 100 requests/day at newsapi.org",
+            "editor": "textfield",
+            "isSecret": true
+        },
+        "GNEWS_KEY": {
+            "title": "GNews API Key (optional)",
+            "type": "string",
+            "description": "Free tier: 100 requests/day at gnews.io",
+            "editor": "textfield",
+            "isSecret": true
+        },
+        "THENEWSAPI_KEY": {
+            "title": "TheNewsAPI Key (optional)",
+            "type": "string",
+            "description": "Free tier: 100 requests/day at thenewsapi.com",
+            "editor": "textfield",
+            "isSecret": true
+        },
+        "MEDIASTACK_KEY": {
+            "title": "MediaStack Key (optional)",
+            "type": "string",
+            "description": "Free tier: 500 requests/month at mediastack.com",
+            "editor": "textfield",
+            "isSecret": true
+        }
+    },
+    "required": ["company_name"]
+}
