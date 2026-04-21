@@ -19,18 +19,18 @@
             "enumTitles": ["Last 24 hours", "Last 3 days", "Last 7 days", "Last 14 days", "Last 30 days", "Last 90 days"],
             "default": "7d"
         },
-        "intent_categories": {
-            "title": "Intent Categories",
-            "type": "array",
-            "description": "Which event types to track and classify",
-            "editor": "select",
-            "items": {
-                "type": "string",
-                "enum": ["expansion", "product_launch", "funding", "partnership", "compliance"]
-            },
-            "enumTitles": ["Expansion / M&A", "Product Launch", "Funding Rounds", "Partnership / Deals", "Compliance / Legal"],
-            "default": ["expansion", "product_launch", "funding", "partnership", "compliance"]
-        },
+"intent_categories": {
+    "title": "Intent Categories",
+    "type": "array",
+    "description": "Which event types to track and classify",
+    "editor": "select",
+    "items": {
+        "type": "string",
+        "enum": ["expansion", "product_launch", "funding", "partnership", "compliance"],
+        "enumTitles": ["Expansion / M&A", "Product Launch", "Funding Rounds", "Partnership / Deals", "Compliance / Legal"]
+    },
+    "default": ["expansion", "product_launch", "funding", "partnership", "compliance"]
+},
         "max_results": {
             "title": "Max Results",
             "type": "integer",
