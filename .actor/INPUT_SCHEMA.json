@@ -3,60 +3,113 @@
     "type": "object",
     "schemaVersion": 1,
     "properties": {
+
         "company_name": {
-            "title": "Company Name",
+            "title": "Company Name (Single)",
             "type": "string",
-            "description": "Name of the company to monitor (e.g. 'Salesforce', 'Stripe', 'OpenAI')",
+            "description": "Name of a single company to monitor. Leave blank if using the bulk CSV option.",
             "editor": "textfield",
             "example": "Stripe"
         },
+
+        "companies_csv": {
+            "title": "Bulk Companies CSV",
+            "type": "string",
+            "description": "CSV content (or URL to a CSV file) with one company name per row, first column. Supports up to 20 companies. Overrides 'Company Name' if provided.",
+            "editor": "textarea",
+            "example": "Stripe\nOpenAI\nSalesforce\nShopify\nPalantir"
+        },
+
         "time_window": {
             "title": "Time Window",
             "type": "string",
-            "description": "How far back to look for news articles",
+            "description": "How far back to look for news articles.",
             "editor": "select",
-            "enum": ["1d", "3d", "7d", "14d", "30d", "90d"],
-            "enumTitles": ["Last 24 hours", "Last 3 days", "Last 7 days", "Last 14 days", "Last 30 days", "Last 90 days"],
+            "enum": ["1d", "3d", "7d", "14d", "30d", "90d", "6m", "1y"],
+            "enumTitles": [
+                "Last 24 hours",
+                "Last 3 days",
+                "Last 7 days",
+                "Last 14 days",
+                "Last 30 days",
+                "Last 90 days",
+                "Last 6 months",
+                "Last 1 year"
+            ],
             "default": "7d"
         },
-"intent_categories": {
-    "title": "Intent Categories",
-    "type": "array",
-    "description": "Which event types to track and classify",
-    "editor": "select",
-    "items": {
-        "type": "string",
-        "enum": ["expansion", "product_launch", "funding", "partnership", "compliance"],
-        "enumTitles": ["Expansion / M&A", "Product Launch", "Funding Rounds", "Partnership / Deals", "Compliance / Legal"]
-    },
-    "default": ["expansion", "product_launch", "funding", "partnership", "compliance"]
-},
+
+        "intent_categories": {
+            "title": "Intent Categories",
+            "type": "array",
+            "description": "Which event types to track and classify.",
+            "editor": "select",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "expansion",
+                    "mergers_acquisitions",
+                    "product_launch",
+                    "funding",
+                    "partnership",
+                    "compliance"
+                ],
+                "enumTitles": [
+                    "Expansion (organic growth, new markets, new offices)",
+                    "Mergers & Acquisitions (M&A, IPO, takeovers, spin-offs)",
+                    "Product Launch",
+                    "Funding Rounds",
+                    "Partnership / Deals",
+                    "Compliance / Legal"
+                ]
+            },
+            "default": [
+                "expansion",
+                "mergers_acquisitions",
+                "product_launch",
+                "funding",
+                "partnership",
+                "compliance"
+            ]
+        },
+
         "max_results": {
-            "title": "Max Results",
+            "title": "Max Results (per company)",
             "type": "integer",
-            "description": "Maximum number of events to return",
+            "description": "Maximum number of events to return per company.",
             "editor": "number",
             "default": 50,
             "minimum": 1,
             "maximum": 500
         },
+
         "min_impact_score": {
             "title": "Minimum Impact Score",
             "type": "integer",
-            "description": "Only return events with this impact score or higher (1–10)",
+            "description": "Only return events with this impact score or higher (1–10).",
             "editor": "number",
             "default": 3,
             "minimum": 1,
             "maximum": 10
         },
+
         "language": {
             "title": "Language",
             "type": "string",
-            "description": "Language code for news filtering",
+            "description": "Language code for news filtering (e.g. 'en', 'de', 'fr').",
             "editor": "textfield",
             "default": "en"
         },
-       
+
+
+
+        "groq_verify": {
+            "title": "Enable Groq Self-Verification",
+            "type": "boolean",
+            "description": "Run a second Groq LLM pass to verify summaries against source text (detects hallucinations). Increases API usage; recommended for high-accuracy runs.",
+            "default": false
+        }
     },
-    "required": ["company_name"]
+
+    "required": []
 }
