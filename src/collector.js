@@ -16,23 +16,29 @@
 
 import { log } from 'apify';
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import { parseStringPromise } from 'xml2js';
 
 const TIME_WINDOW_MAP = {
-    '1d': 1, '3d': 3, '7d': 7, '14d': 14, '30d': 30, '90d': 90,
+    '1d':  1,
+    '3d':  3,
+    '7d':  7,
+    '14d': 14,
+    '30d': 30,
+    '90d': 90,
+    '6m':  180,   // 6 months
+    '1y':  365,   // 1 year
 };
 
 export class NewsCollector {
     constructor({ company_name, time_window, language = 'en' }) {
         this.company_name = company_name;
-        this.days = TIME_WINDOW_MAP[time_window] || 7;
+        this.days = TIME_WINDOW_MAP[time_window] ?? 7;
         this.language = language;
-        this.cutoff = new Date(Date.now() - this.days * 86400_000);
+        this.cutoff = new Date(Date.now() - this.days * 86_400_000);
         this.encodedQuery = encodeURIComponent(`"${company_name}"`);
         this.apiKeys = {
-            newsapi: process.env.NEWSAPI_KEY || '',
-            gnews: process.env.GNEWS_KEY || '',
+            newsapi:    process.env.NEWSAPI_KEY    || '',
+            gnews:      process.env.GNEWS_KEY      || '',
             thenewsapi: process.env.THENEWSAPI_KEY || '',
             mediastack: process.env.MEDIASTACK_KEY || '',
         };
@@ -49,8 +55,8 @@ export class NewsCollector {
         ];
 
         // Conditionally add paid APIs if keys exist
-        if (this.apiKeys.newsapi) tasks.push(this._newsapi());
-        if (this.apiKeys.gnews) tasks.push(this._gnews());
+        if (this.apiKeys.newsapi)    tasks.push(this._newsapi());
+        if (this.apiKeys.gnews)      tasks.push(this._gnews());
         if (this.apiKeys.thenewsapi) tasks.push(this._thenewsapi());
         if (this.apiKeys.mediastack) tasks.push(this._mediastack());
 
@@ -75,17 +81,20 @@ export class NewsCollector {
     }
 
     async _parseRSS(url, sourceLabel) {
-        const resp = await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const resp = await axios.get(url, {
+            timeout: 15000,
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+        });
         const parsed = await parseStringPromise(resp.data, { explicitArray: false });
         const items = parsed?.rss?.channel?.item || parsed?.feed?.entry || [];
         const arr = Array.isArray(items) ? items : [items];
 
         return arr.map(item => ({
-            title: item.title?._ || item.title || '',
+            title:       item.title?._ || item.title || '',
             description: item.description?._ || item.description || item.summary?._ || item.summary || '',
-            url: item.link?.href || item.link || item.guid?._ || item.guid || '',
+            url:         item.link?.href || item.link || item.guid?._ || item.guid || '',
             publishedAt: item.pubDate || item.published || item.updated || null,
-            source: sourceLabel,
+            source:      sourceLabel,
         }));
     }
 
@@ -132,65 +141,70 @@ export class NewsCollector {
     async _secEdgar() {
         // SEC EDGAR full-text search — free government API
         const url = `https://efts.sec.gov/LATEST/search-index?q="${encodeURIComponent(this.company_name)}"&dateRange=custom&startdt=${this._isoDate(this.cutoff)}&forms=8-K,S-1,10-Q`;
-        const resp = await axios.get(url, { timeout: 15000, headers: { 'User-Agent': 'CompanyNewsMiner contact@example.com' } });
+        const resp = await axios.get(url, {
+            timeout: 15000,
+            headers: { 'User-Agent': 'CompanyNewsMiner contact@example.com' },
+        });
         const hits = resp.data?.hits?.hits || [];
         return hits.map(h => ({
-            title: h._source?.period_of_report
+            title:       h._source?.period_of_report
                 ? `SEC Filing: ${h._source?.form_type} — ${this.company_name}`
                 : `SEC Filing: ${h._source?.form_type || '8-K'}`,
-            description: h._source?.file_date ? `Filed: ${h._source.file_date}. Form type: ${h._source?.form_type}` : '',
+            description: h._source?.file_date
+                ? `Filed: ${h._source.file_date}. Form type: ${h._source?.form_type}`
+                : '',
             url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${encodeURIComponent(this.company_name)}&type=8-K`,
             publishedAt: h._source?.file_date || null,
-            source: 'SEC EDGAR',
+            source:      'SEC EDGAR',
         }));
     }
 
     async _newsapi() {
         const from = this._isoDate(this.cutoff);
-        const url = `https://newsapi.org/v2/everything?q=${this.encodedQuery}&from=${from}&sortBy=relevancy&language=${this.language}&apiKey=${this.apiKeys.newsapi}`;
+        const url  = `https://newsapi.org/v2/everything?q=${this.encodedQuery}&from=${from}&sortBy=relevancy&language=${this.language}&apiKey=${this.apiKeys.newsapi}`;
         const resp = await axios.get(url, { timeout: 15000 });
         return (resp.data.articles || []).map(a => ({
-            title: a.title || '',
+            title:       a.title || '',
             description: a.description || a.content || '',
-            url: a.url,
+            url:         a.url,
             publishedAt: a.publishedAt,
-            source: `NewsAPI / ${a.source?.name || 'Unknown'}`,
+            source:      `NewsAPI / ${a.source?.name || 'Unknown'}`,
         }));
     }
 
     async _gnews() {
-        const url = `https://gnews.io/api/v4/search?q=${this.encodedQuery}&lang=${this.language}&max=10&apikey=${this.apiKeys.gnews}`;
+        const url  = `https://gnews.io/api/v4/search?q=${this.encodedQuery}&lang=${this.language}&max=10&apikey=${this.apiKeys.gnews}`;
         const resp = await axios.get(url, { timeout: 15000 });
         return (resp.data.articles || []).map(a => ({
-            title: a.title || '',
+            title:       a.title || '',
             description: a.description || a.content || '',
-            url: a.url,
+            url:         a.url,
             publishedAt: a.publishedAt,
-            source: `GNews / ${a.source?.name || 'Unknown'}`,
+            source:      `GNews / ${a.source?.name || 'Unknown'}`,
         }));
     }
 
     async _thenewsapi() {
-        const url = `https://api.thenewsapi.com/v1/news/all?search=${this.encodedQuery}&language=${this.language}&api_token=${this.apiKeys.thenewsapi}`;
+        const url  = `https://api.thenewsapi.com/v1/news/all?search=${this.encodedQuery}&language=${this.language}&api_token=${this.apiKeys.thenewsapi}`;
         const resp = await axios.get(url, { timeout: 15000 });
         return (resp.data.data || []).map(a => ({
-            title: a.title || '',
+            title:       a.title || '',
             description: a.description || '',
-            url: a.url,
+            url:         a.url,
             publishedAt: a.published_at,
-            source: `TheNewsAPI / ${a.source || 'Unknown'}`,
+            source:      `TheNewsAPI / ${a.source || 'Unknown'}`,
         }));
     }
 
     async _mediastack() {
-        const url = `http://api.mediastack.com/v1/news?keywords=${this.encodedQuery}&languages=${this.language}&access_key=${this.apiKeys.mediastack}`;
+        const url  = `http://api.mediastack.com/v1/news?keywords=${this.encodedQuery}&languages=${this.language}&access_key=${this.apiKeys.mediastack}`;
         const resp = await axios.get(url, { timeout: 15000 });
         return (resp.data.data || []).map(a => ({
-            title: a.title || '',
+            title:       a.title || '',
             description: a.description || '',
-            url: a.url,
+            url:         a.url,
             publishedAt: a.published_at,
-            source: `MediaStack / ${a.source || 'Unknown'}`,
+            source:      `MediaStack / ${a.source || 'Unknown'}`,
         }));
     }
 
