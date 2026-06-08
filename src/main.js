@@ -36,7 +36,8 @@ const {
     time_window       = '7d',
     intent_categories = [
         'expansion', 'mergers_acquisitions', 'product_launch',
-        'funding', 'partnership', 'compliance',
+        'funding', 'partnership', 'compliance','leadership_change', 'layoffs',
+
     ],
     max_results       = 50,
     min_impact_score  = 3,
@@ -121,7 +122,7 @@ async function processCompany(targetCompany) {
     log.info(`\n─── Processing: "${targetCompany}" ───`);
 
     // 1. COLLECT
-    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language });
+    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories });
     const rawArticles = await collector.collect();
     log.info(`  📡 Collected ${rawArticles.length} raw articles`);
 
@@ -154,11 +155,14 @@ async function processCompany(targetCompany) {
         event_type:          classification.event_type,
         headline:            article.title,
         // summary:             summaries[i] || article.description || '',
+        description:         article.description || '',
+        summary:             summaries[i] || '',
         event_date:          article.publishedAt || article.date || null,
         source:              article.source,
         source_link:         article.url,
         intent_signal:       impact.intent_signal,
         event_impact_score:  impact.event_impact_score,
+        relevance_score:     article.relevanceScore ?? 0,
         confidence:          classification.confidence,
         keywords_matched:    classification.keywords_matched,
         scraped_at:          new Date().toISOString(),
