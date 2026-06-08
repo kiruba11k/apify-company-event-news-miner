@@ -52,7 +52,9 @@
                     "product_launch",
                     "funding",
                     "partnership",
-                    "compliance"
+                    "compliance",
+                    "leadership_change",
+                    "layoffs"
                 ],
                 "enumTitles": [
                     "Expansion (organic growth, new markets, new offices)",
@@ -60,7 +62,10 @@
                     "Product Launch",
                     "Funding Rounds",
                     "Partnership / Deals",
-                    "Compliance / Legal"
+                    
+                    "Compliance / Legal",
+                    "Leadership Change (CEO, board, executive appointments/exits)",
+                    "Layoffs & Restructuring"
                 ]
             },
             "default": [
@@ -69,7 +74,9 @@
                 "product_launch",
                 "funding",
                 "partnership",
-                "compliance"
+                "compliance",
+                "leadership_change",
+                "layoffs"
             ]
         },
 
