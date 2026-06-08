@@ -8,34 +8,44 @@
  * Scoring model (additive, capped at 10):
  *
  *  Base score by event type:
- *   funding         → 7 base (high-intent signal)
- *   expansion       → 6
- *   product_launch  → 5
- *   partnership     → 5
- *   compliance      → 4 (depends on magnitude)
+ *   funding              → 7 (high-intent signal)
+ *   mergers_acquisitions → 7 (major corporate event)
+ *   expansion            → 6
+ *   leadership_change    → 6 (strong buying/relationship trigger)
+ *   product_launch       → 5
+ *   partnership          → 5
+ *   compliance           → 4 (depends on magnitude)
+ *   layoffs              → 5 (restructuring signal)
  *
  *  Modifiers (+/-):
- *   + Credible source (Reuters, Bloomberg, FT, SEC, WSJ, etc.) → +1
- *   + Dollar amount mentioned (millions/billions)              → +1
- *   + Recent (<48 hrs)                                         → +1
- *   + Multiple strong keyword matches (≥3)                    → +1
- *   - Source is only PR wire (PR Newswire / BusinessWire)      → -1
- *   - Low confidence classification                            → -1
+ *   + Company name in article title                            → +2
+ *   + Credible source (Reuters, Bloomberg, FT, SEC, etc.)     → +1
+ *   + Dollar amount mentioned (millions/billions)             → +1
+ *   + Recent (<48 hrs)                                        → +1
+ *   + High-confidence classification (≥2 strong keywords)    → +1
+ *   + 3+ strong keyword matches                               → +1
+ *   - Source is only PR wire (not corroborated)               → -1
+ *   - Low confidence classification                           → -1
+ *   - Company only in description, not title                  → -1
  */
 
 const EVENT_BASE_SCORES = {
-    funding: 7,
-    expansion: 6,
-    product_launch: 5,
-    partnership: 5,
-    compliance: 4,
+    funding:             7,
+    mergers_acquisitions: 7,
+    expansion:           6,
+    leadership_change:   6,
+    product_launch:      5,
+    partnership:         5,
+    layoffs:             5,
+    compliance:          4,
 };
 
 const CREDIBLE_SOURCES = [
     'reuters', 'bloomberg', 'ft.com', 'financial times', 'wsj', 'wall street journal',
     'sec edgar', 'techcrunch', 'the verge', 'wired', 'forbes', 'fortune',
-    'associated press', 'bbc', 'cnbc', 'nytimes', 'new york times',
-    'business insider', 'venturebeat', 'crunchbase',
+    'associated press', 'ap news', 'bbc', 'cnbc', 'nytimes', 'new york times',
+    'business insider', 'venturebeat', 'crunchbase', 'hacker news',
+    'yahoo finance', 'marketwatch', 'barrons', 'seeking alpha',
 ];
 
 const PR_WIRES = ['pr newswire', 'businesswire', 'globenewswire', 'accesswire'];
@@ -47,16 +57,20 @@ export class ImpactScorer {
         const base = EVENT_BASE_SCORES[classification.event_type] || 4;
         let modifier = 0;
 
-        const src = (article.source || '').toLowerCase();
+        const src  = (article.source || '').toLowerCase();
         const text = `${article.title} ${article.description || ''}`;
+                // Relevance: company name in title is a strong signal
+        const relevance = article.relevanceScore ?? 0;
+        if (relevance >= 3) modifier += 2;       // company in title
+        else if (relevance === 0) modifier -= 1; // company barely mentioned
 
         // Credible source bonus
         if (CREDIBLE_SOURCES.some(s => src.includes(s))) modifier += 1;
 
-        // PR wire penalty
+// PR wire penalty (self-reported, no independent corroboration)
         if (PR_WIRES.some(s => src.includes(s))) modifier -= 1;
 
-        // Dollar amount bonus (signals funding / major deal)
+        // Dollar amount bonus 
         if (MONEY_RE.test(text)) modifier += 1;
 
         // Recency bonus
@@ -64,7 +78,7 @@ export class ImpactScorer {
 
         // Classification strength
         if (classification.confidence === 'High') modifier += 1;
-        if (classification.confidence === 'Low') modifier -= 1;
+        if (classification.confidence === 'Low')  modifier -= 1;
         if ((classification.keywords_matched || []).length >= 3) modifier += 1;
 
         const score = Math.min(10, Math.max(1, base + modifier));
@@ -77,7 +91,7 @@ export class ImpactScorer {
 
     _isRecent(dateStr, hours) {
         if (!dateStr) return false;
-        const diff = Date.now() - new Date(dateStr).getTime();
-        return diff < hours * 3600_000;
+        return (Date.now() - new Date(dateStr).getTime()) < hours * 3_600_000;
+
     }
 }
