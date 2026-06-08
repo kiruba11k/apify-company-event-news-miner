@@ -89,7 +89,7 @@ const CATEGORY_RULES = {
             'secures funding', 'closes funding', 'completes fundraise',
             'new funding', 'raises capital', 'secures investment',
         ],
-        ],
+       
         supporting: [
              'million', 'billion', 'valuation', 'investor', 'investors', 'equity',
             'startup', 'growth capital', 'fundraise', 'revenue milestone',
