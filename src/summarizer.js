@@ -20,6 +20,12 @@
 
 import Groq from 'groq-sdk';
 import { log } from 'apify';
+import * as cheerio from 'cheerio';
+
+function stripHtml(text) {
+    if (!text || !text.includes('<')) return text || '';
+    return cheerio.load(text).text().trim();
+}
 
 // Minimum article text length before we even try LLM summarisation
 const MIN_TEXT_LENGTH = 80;
@@ -134,8 +140,8 @@ export class GroqSummarizer {
 
     _buildArticleText(article) {
         const parts = [
-            article.title       ? `Title: ${article.title}`       : '',
-            article.description ? `Body: ${article.description}`  : '',
+            article.title       ? `Title: ${stripHtml(article.title)}`       : '',
+            article.description ? `Body: ${stripHtml(article.description)}`  : '',
         ];
         return parts.filter(Boolean).join('\n').trim();
     }
@@ -193,9 +199,9 @@ export class GroqSummarizer {
         }
     }
 
-    /** Rule-based fallback: first ~220 chars of description, no LLM */
+    /** Rule-based fallback: first ~220 chars of plain-text description, no LLM */
     _fallback(article) {
-        const text = article.description || article.title || '';
+        const text = stripHtml(article.description || article.title || '');
         return text.length > 220 ? text.slice(0, 217) + '…' : text;
     }
 }
