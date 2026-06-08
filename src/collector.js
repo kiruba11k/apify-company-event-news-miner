@@ -24,7 +24,19 @@
 import { log } from 'apify';
 import axios from 'axios';
 import { parseStringPromise } from 'xml2js';
-
+import * as cheerio from 'cheerio';
+/**
+ * Strip HTML tags and return plain text. Also extracts the first <a href>
+ * as the real URL (needed for Google News RSS which wraps real links in HTML).
+ */
+function parseHtmlField(html) {
+    if (!html || typeof html !== 'string') return { text: html || '', realUrl: null };
+    if (!html.includes('<')) return { text: html, realUrl: null };
+    const $ = cheerio.load(html);
+    const realUrl = $('a[href]').first().attr('href') || null;
+    const text = $.text().trim();
+    return { text, realUrl };
+}
 const TIME_WINDOW_MAP = {
     '1d':  1,
     '3d':  3,
@@ -155,13 +167,22 @@ export class NewsCollector {
         const items = parsed?.rss?.channel?.item || parsed?.feed?.entry || [];
         const arr = Array.isArray(items) ? items : [items];
 
-        return arr.map(item => ({
-            title:       item.title?._ || item.title || '',
-            description: item.description?._ || item.description || item.summary?._ || item.summary || '',
-            url:         item.link?.href || item.link || item.guid?._ || item.guid || '',
-            publishedAt: item.pubDate || item.published || item.updated || null,
-            source:      sourceLabel,
-        }));
+        return arr.map(item => {
+            const rawDesc = item.description?._ || item.description || item.summary?._ || item.summary || '';
+            const { text: descText, realUrl: descUrl } = parseHtmlField(rawDesc);
+            const rawTitle = item.title?._ || item.title || '';
+            const { text: titleText } = parseHtmlField(rawTitle);
+            const rawUrl = item.link?.href || item.link || item.guid?._ || item.guid || '';
+            // Prefer real article URL extracted from HTML description over redirect/guid URL
+            const url = descUrl || rawUrl || '';
+            return {
+                title:       titleText,
+                description: descText,
+                url,
+                publishedAt: item.pubDate || item.published || item.updated || null,
+                source:      sourceLabel,
+            };
+        });
     }
 
     async _googleNewsRSS() {
