@@ -159,7 +159,7 @@ async function processCompany(targetCompany) {
         log.info(`  🔎 After entity filter: ${uniqueArticles.length} / ${beforeEntity} articles kept`);
     }
     // 3. CLASSIFY + SCORE (filter first so we only summarise relevant articles)
-    const classified = [];
+    let classified = [];
     for (const article of uniqueArticles) {
         const classification = classifier.classify(article);
         if (!classification) continue;
@@ -172,9 +172,22 @@ async function processCompany(targetCompany) {
 
     log.info(`  🔍 Classified: ${classified.length} relevant events`);
 
-    // 4. SUMMARISE — batch call with concurrency=5
+    // 3b. POST-CLASSIFICATION SEMANTIC DEDUP
+    // The pre-classification LLM dedup processes in non-overlapping chunks so same-event
+    // articles spanning chunk boundaries survive. After classification the set is small
+    // enough (typically <30) to dedup in a single pass, catching cross-chunk duplicates.
+    if ((groq_api_key || process.env.GROQ_API_KEY) && classified.length > 1) {
+        const preDedup = classified.map(c => c.article);
+        const deduplicator2 = new Deduplicator();
+        const dedupedArticles = await deduplicator2.deduplicateWithLLM(preDedup, summarizer.groqClient);
+        const keptUrls = new Set(dedupedArticles.map(a => a.url));
+        classified = classified.filter(c => keptUrls.has(c.article.url));
+        log.info(`  🗂  After post-classification dedup: ${classified.length} events`);
+    }
+
+    // 4. SUMMARISE — batch call with concurrency=2
     const articles   = classified.map(c => c.article);
-    const summaries  = await summarizer.summariseBatch(articles, 5);
+    const summaries  = await summarizer.summariseBatch(articles, 2);
 
     // 5. BUILD RECORDS
     const results = classified.map(({ article, classification, impact }, i) => {
