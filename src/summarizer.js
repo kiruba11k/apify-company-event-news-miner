@@ -148,9 +148,12 @@ export class GroqSummarizer {
     // ── Private helpers ──────────────────────────────────────────────────────
 
     _buildArticleText(article) {
+        let title = stripHtml(article.title || '');
+        // Strip " - Source Name" suffix (Google News RSS format) before sending to LLM
+        title = title.replace(/\s[-–—]\s[^-–—]{2,50}$/, '').trim();
         const parts = [
-            article.title       ? `Title: ${stripHtml(article.title)}`       : '',
-            article.description ? `Body: ${stripHtml(article.description)}`  : '',
+            title               ? `Title: ${title}`                          : '',
+            article.description ? `Body: ${stripHtml(article.description)}` : '',
         ];
         return parts.filter(Boolean).join('\n').trim();
     }
@@ -215,27 +218,47 @@ export class GroqSummarizer {
 
     /**
      * Rule-based fallback — formats as "In [Month Year], [Company] [event]."
-     * Uses the article title as the event description when no LLM is available.
+     * Works without a Groq API key.
      */
     _fallback(article) {
         const rawDate = article.publishedAt || article.date || '';
         const monthYear = rawDate ? this._formatMonthYear(rawDate) : '';
         const company = this.companyName || '';
-        const title = stripHtml(article.title || '');
-        const desc  = stripHtml(article.description || '');
+        let title = stripHtml(article.title || '');
 
-        // Pick the richer of title vs description (skip if it's just a copy of the title)
-        const eventText = (desc && desc !== title && desc.length > title.length)
-            ? (desc.length > 200 ? desc.slice(0, 197) + '…' : desc)
-            : title;
+        // Strip " - Source Name" suffix appended by Google News RSS
+        // e.g. "Leonardo acquires Becrypt - UK Defence Journal" → "Leonardo acquires Becrypt"
+        title = title.replace(/\s[-–—]\s[^-–—]{2,50}$/, '').trim();
 
         if (monthYear && company) {
-            // Strip any leading "company - source" duplication common in RSS feeds
-            const cleaned = eventText.replace(new RegExp(`^${company}[\\s\\-–—:]+`, 'i'), '');
-            return `In ${monthYear}, ${company} ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`;
+            // Strip leading "Company - " or "Company: " prefix if present (full name match)
+            const escaped = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            let event = title.replace(new RegExp(`^${escaped}[\\s\\-–—:,]+`, 'i'), '').trim();
+
+            // If full name didn't match, try stripping just the first word of the company name
+            if (event === title) {
+                const firstWord = company.split(/\s+/)[0] || '';
+                if (firstWord.length > 2) {
+                    const escapedFirst = firstWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    event = title.replace(new RegExp(`^${escapedFirst}[\\s\\-–—:,]+`, 'i'), '').trim();
+                }
+            }
+
+            // If the event clause still starts with a company-name token, the title is
+            // already self-contained — emit without prepending the company name again.
+            const companyFirstToken = (company.split(/\s+/)[0] || '').toLowerCase();
+            if (event.toLowerCase().startsWith(companyFirstToken) && companyFirstToken.length > 2) {
+                // Capitalize first char (it was stripped/lowercased) and return as-is
+                const cap = event.charAt(0).toUpperCase() + event.slice(1);
+                return `In ${monthYear}, ${cap}`.replace(/\s{2,}/g, ' ');
+            }
+
+            // Lowercase the very first character of the event clause
+            if (event.length > 0) event = event.charAt(0).toLowerCase() + event.slice(1);
+            return `In ${monthYear}, ${company} ${event}`.replace(/\s{2,}/g, ' ');
         }
-        if (monthYear) return `In ${monthYear}, ${eventText}`;
-        return eventText.length > 220 ? eventText.slice(0, 217) + '…' : eventText;
+        if (monthYear) return `In ${monthYear}, ${title}`;
+        return title.length > 220 ? title.slice(0, 217) + '…' : title;
     }
 
     /** Format a date string as "Month YYYY" for the LLM context */
