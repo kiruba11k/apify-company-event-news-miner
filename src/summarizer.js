@@ -70,7 +70,7 @@ Output schema:
 }`;
 
 export class GroqSummarizer {
-    constructor({ apiKey, model = 'llama3-70b-8192', verify = false, companyName = '' } = {}) {
+    constructor({ apiKey, model = 'llama-3.3-70b-versatile', verify = false, companyName = '' } = {}) {
         this.client      = new Groq({ apiKey: apiKey || process.env.GROQ_API_KEY });
         this.model       = model;
         this.verify      = verify;
