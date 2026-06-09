@@ -41,27 +41,57 @@ export class Deduplicator {
 
     /**
      * LLM-based semantic deduplication.
-     * Sends all headlines to Groq in one call and asks it to identify groups
-     * that cover the same news event. Keeps the richest article per group.
-     *
-     * @param {object[]} articles
-     * @param {import('groq-sdk').default} groqClient
-     * @param {string} model
-     * @returns {Promise<object[]>}
+     * Sends headlines to Groq in chunks and asks it to identify groups
+     * that cover the same news event by meaning/context, not just wording.
+     * Keeps the richest article per group.
      */
     async deduplicateWithLLM(articles, groqClient, model = 'llama3-70b-8192') {
         if (articles.length <= 1) return articles;
 
-        const headlineList = articles
+        // Process in chunks of 40 to avoid exceeding token limits
+        const CHUNK = 40;
+        const globalToRemove = new Set();
+
+        for (let start = 0; start < articles.length; start += CHUNK) {
+            const chunk       = articles.slice(start, start + CHUNK);
+            const chunkGroups = await this._llmDeduplicateChunk(chunk, groqClient, model);
+
+            // Translate chunk-local indices back to global indices
+            for (const group of chunkGroups) {
+                if (!Array.isArray(group) || group.length < 2) continue;
+                const globalGroup = group.map(localIdx => start + localIdx);
+                const richest = globalGroup.reduce((best, gi) =>
+                    (articles[gi]?.description || '').length > (articles[best]?.description || '').length ? gi : best
+                , globalGroup[0]);
+                for (const gi of globalGroup) {
+                    if (gi !== richest) globalToRemove.add(gi);
+                }
+            }
+        }
+
+        const result = articles.filter((_, i) => !globalToRemove.has(i));
+        log.info(`  🤖 LLM dedup removed ${globalToRemove.size} semantic duplicates (${articles.length} → ${result.length})`);
+        return result;
+    }
+
+    async _llmDeduplicateChunk(chunk, groqClient, model) {
+        const headlineList = chunk
             .map((a, i) => `${i + 1}. ${a.title}`)
             .join('\n');
 
-        const systemPrompt = `You are a news deduplication assistant. Given a numbered list of article headlines, identify groups of headlines that report on the SAME underlying news event (same event, possibly from different sources or with slightly different wording).
+        const systemPrompt = `You are a news deduplication assistant. Given a numbered list of article headlines, your job is to find groups of headlines that cover the SAME underlying news event — even if the wording, phrasing, or details differ significantly between sources.
+
+KEY PRINCIPLE: Focus on the MEANING and CONTEXT, not the words.
+- "Acme buys Widgets Inc" and "Acme completes acquisition of Widgets Inc" → SAME EVENT
+- "Leonardo wins £1bn helicopter contract" and "UK awards Leonardo deal for New Medium Helicopter" → SAME EVENT
+- "CEO of Stripe resigns" and "Stripe announces leadership change" → SAME EVENT (if same person/time)
+- "Soho House merges with MCR" and "Soho House completes merger, goes private" → SAME EVENT
 
 Rules:
-- Only group headlines that are clearly about the SAME specific event (same company, same action, same time period).
-- Do NOT group headlines that are related but about different events.
-- If a headline is unique, do not include it in any group.
+- Group headlines that describe the same specific event (same company, same action, same time period).
+- Use context clues — even if company names or deal names are abbreviated differently.
+- Do NOT group headlines that are about genuinely different events (different acquisitions, different dates).
+- If a headline has no match, do not include it in any group.
 - Respond ONLY with valid JSON — no markdown, no preamble.
 
 Output schema:
@@ -72,46 +102,26 @@ Output schema:
   ]
 }
 
-Where each inner array contains the 1-based indices of headlines that are duplicates of each other. Return an empty array if no duplicates found.`;
+Each inner array = 1-based indices of headlines covering the same event. Return empty array if no duplicates.`;
 
         try {
             const response = await groqClient.chat.completions.create({
                 model,
                 temperature: 0,
-                max_tokens: 512,
+                max_tokens:  768,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `HEADLINES:\n${headlineList}\n\nIdentify duplicate groups now.` },
+                    { role: 'user',   content: `HEADLINES:\n${headlineList}\n\nIdentify semantic duplicate groups now.` },
                 ],
             });
 
-            const raw = response.choices?.[0]?.message?.content || '';
+            const raw    = response.choices?.[0]?.message?.content || '';
             const parsed = this._parseJSON(raw);
-            const groups = parsed?.duplicate_groups || [];
-
-            if (!groups.length) return articles;
-
-            // Build set of indices to remove (keep first/richest in each group)
-            const toRemove = new Set();
-            for (const group of groups) {
-                if (!Array.isArray(group) || group.length < 2) continue;
-                // Find richest article in the group (by description length)
-                const groupArticles = group.map(idx => ({ idx, article: articles[idx - 1] })).filter(x => x.article);
-                const richest = groupArticles.reduce((best, cur) =>
-                    (cur.article.description || '').length > (best.article.description || '').length ? cur : best
-                );
-                for (const { idx } of groupArticles) {
-                    if (idx !== richest.idx) toRemove.add(idx - 1);
-                }
-            }
-
-            const result = articles.filter((_, i) => !toRemove.has(i));
-            log.info(`  🤖 LLM dedup removed ${toRemove.size} semantic duplicates (${articles.length} → ${result.length})`);
-            return result;
+            return parsed?.duplicate_groups || [];
 
         } catch (err) {
-            log.warning(`[Deduplicator] LLM dedup failed, skipping: ${err.message}`);
-            return articles;
+            log.warning(`[Deduplicator] LLM dedup chunk failed: ${err.message}`);
+            return [];
         }
     }
 
