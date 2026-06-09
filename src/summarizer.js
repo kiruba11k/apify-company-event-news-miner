@@ -1,21 +1,6 @@
 /**
  * GroqSummarizer
- *
- * Generates grounded, factual summaries using the Groq API (llama3-70b-8192).
- *
- * Anti-hallucination strategy:
- *  1. STRICT GROUNDING  — model is told to use ONLY information present in the
- *     provided article text. Any claim not in the source text is forbidden.
- *  2. CONFIDENCE GATE   — if the article text is too short / ambiguous the
- *     summarizer returns a fallback instead of guessing.
- *  3. TEMPERATURE = 0   — deterministic output, no creative drift.
- *  4. STRUCTURED OUTPUT — model must return a JSON object; free-form prose is
- *     rejected so the caller can detect malformed responses.
- *  5. SELF-VERIFICATION — a second lightweight Groq call checks the summary
- *     against the source and flags any unsupported claims (optional, enabled
- *     via `verify: true` in options).
- *  6. FALLBACK CHAIN    — any error → rule-based excerpt → empty string.
- *     The pipeline never blocks; summaries are always "best-effort".
+ * ...
  */
 
 import Groq from 'groq-sdk';
@@ -27,26 +12,34 @@ function stripHtml(text) {
     return cheerio.load(text).text().trim();
 }
 
-// Minimum article text length before we even try LLM summarisation
 const MIN_TEXT_LENGTH = 80;
-
-// Maximum characters of article text sent to the model (cost + latency guard)
 const MAX_INPUT_CHARS = 3000;
 
 const SYSTEM_PROMPT = `You are a factual business-intelligence summariser.
 
-STRICT RULES — follow every rule or your output is invalid:
-1. Use ONLY information explicitly stated in the ARTICLE TEXT provided by the user.
+STRICT RULES — violating any rule makes your output invalid:
+1. Use ONLY information explicitly stated in the ARTICLE TEXT. Do NOT add background knowledge, opinions, or predictions.
 2. Do NOT invent names, figures, dates, percentages, or any detail absent from the article.
-3. If the article text is insufficient to produce a confident summary, set "summary" to null and set "insufficient_data" to true.
-4. Your summary must be 1–2 sentences maximum.
-5. Do NOT add opinions, predictions, or background knowledge.
-6. Respond ONLY with a valid JSON object — no markdown fences, no preamble.
-7. CRITICAL FORMAT: The summary MUST begin with the time reference in the format "In [Month Year]," followed by the company name and the event. Example: "In March 2025, Acme Corp acquired XYZ Ltd for $500 million to expand its cloud services portfolio." If the exact month/year is not in the article, use the article date provided in ARTICLE_DATE.
+3. Your summary MUST be exactly 1–2 sentences.
+4. Respond ONLY with a valid JSON object — no markdown fences, no preamble, no extra text.
+5. If the article text is too short or vague to summarise confidently, set "summary" to null and "insufficient_data" to true.
+
+MANDATORY SUMMARY FORMAT — every summary must follow this exact structure:
+  "In [Month YYYY], [Company] [did what] [deal size / key detail if present] [to achieve what / resulting in what]."
+
+GOOD EXAMPLES (copy this style exactly):
+  "In March 2025, Arthur J. Gallagher & Co. announced a $1.2 billion acquisition of Woodruff Sawyer to strengthen its management liability, cyber, construction, and real estate insurance capabilities."
+  "In December 2025, Arthur J. Gallagher & Co. acquired First Actuarial to expand its pensions, employee benefits, and actuarial consulting business in the UK."
+  "In January 2026, Soho House completed its merger with MCR Hotels in a $2.7 billion take-private deal, delisting from the NYSE and becoming a private company."
+
+RULES FOR THE DATE:
+- Use the month and year from ARTICLE_DATE if available.
+- If ARTICLE_DATE is missing, extract the date from the article text itself.
+- Never omit the date — it is required.
 
 Output schema:
 {
-  "summary": "<1-2 sentence factual summary starting with 'In [Month Year], [Company]...' | null>",
+  "summary": "<1-2 sentence summary in the mandatory format above | null>",
   "key_facts": ["<fact 1 from article>", "<fact 2 from article>"],
   "insufficient_data": <true | false>
 }`;
@@ -62,13 +55,6 @@ Output schema:
 }`;
 
 export class GroqSummarizer {
-    /**
-     * @param {object} options
-     * @param {string}  options.apiKey      — Groq API key (or set GROQ_API_KEY env var)
-     * @param {string}  [options.model]     — Groq model ID (default: llama3-70b-8192)
-     * @param {boolean} [options.verify]    — run self-verification pass (default: false)
-     * @param {string}  [options.companyName] — company name to anchor summaries
-     */
     constructor({ apiKey, model = 'llama3-70b-8192', verify = false, companyName = '' } = {}) {
         this.client      = new Groq({ apiKey: apiKey || process.env.GROQ_API_KEY });
         this.model       = model;
@@ -76,26 +62,66 @@ export class GroqSummarizer {
         this.companyName = companyName;
     }
 
-    /** Expose the underlying Groq client (used by Deduplicator LLM pass) */
     get groqClient() { return this.client; }
 
-    /**
-     * Summarise a single article.
-     *
-     * @param {object} article  — { title, description, url, source, ... }
-     * @returns {Promise<string>} — grounded summary or safe fallback
-     */
+    async filterByEntityRelevance(articles, companyName, companyDesc = '') {
+        if (!articles.length) return articles;
+
+        const context = companyDesc
+            ? `"${companyName}" (${companyDesc})`
+            : `"${companyName}"`;
+
+        const BATCH = 10;
+        const kept = [];
+
+        for (let i = 0; i < articles.length; i += BATCH) {
+            const batch = articles.slice(i, i + BATCH);
+            const numbered = batch.map((a, idx) =>
+                `${idx + 1}. ${stripHtml(a.title || '')} — ${stripHtml((a.description || '').slice(0, 200))}`
+            ).join('\n');
+
+            const prompt = `You are a relevance filter. The target company is ${context}.
+
+For each article below, reply true if the article is specifically about the target company ${context}, or false if it is about a different entity that happens to share the same name (e.g. a hotel chain, a person, a film, a different company).
+
+Articles:
+${numbered}
+
+Respond ONLY with a JSON array of true/false values matching the order of the articles. Example for 3 articles: [true, false, true]`;
+
+            try {
+                const response = await this.client.chat.completions.create({
+                    model:       this.model,
+                    temperature: 0,
+                    max_tokens:  64,
+                    messages: [{ role: 'user', content: prompt }],
+                });
+                const raw   = (response.choices?.[0]?.message?.content || '').trim();
+                const flags = this._parseJSON(raw);
+
+                if (Array.isArray(flags) && flags.length === batch.length) {
+                    batch.forEach((a, idx) => { if (flags[idx]) kept.push(a); });
+                } else {
+                    kept.push(...batch);
+                }
+            } catch (err) {
+                log.warning(`[GroqSummarizer] Entity filter error: ${err.message} — keeping batch as-is`);
+                kept.push(...batch);
+            }
+        }
+
+        return kept;
+    }
+
     async summarise(article) {
         const rawText = this._buildArticleText(article);
 
-        // Confidence gate: too little text → return trimmed excerpt directly
         if (rawText.length < MIN_TEXT_LENGTH) {
             return this._fallback(article);
         }
 
-        const truncated = rawText.slice(0, MAX_INPUT_CHARS);
-
-        const articleDate = article.publishedAt || article.date || '';
+        const truncated    = rawText.slice(0, MAX_INPUT_CHARS);
+        const articleDate  = article.publishedAt || article.date || '';
         const formattedDate = articleDate ? this._formatMonthYear(articleDate) : '';
 
         try {
@@ -106,7 +132,6 @@ export class GroqSummarizer {
                 return this._fallback(article);
             }
 
-            // Optional self-verification pass
             if (this.verify) {
                 const verdict = await this._verify(truncated, parsed.summary);
                 if (verdict === 'FAIL') {
@@ -123,13 +148,6 @@ export class GroqSummarizer {
         }
     }
 
-    /**
-     * Batch-summarise an array of articles with concurrency control.
-     *
-     * @param {object[]} articles
-     * @param {number}   [concurrency=5]
-     * @returns {Promise<string[]>}
-     */
     async summariseBatch(articles, concurrency = 5) {
         const results = new Array(articles.length).fill('');
         const queue   = articles.map((a, i) => ({ article: a, index: i }));
@@ -145,12 +163,10 @@ export class GroqSummarizer {
         return results;
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
-
     _buildArticleText(article) {
         const parts = [
-            article.title       ? `Title: ${stripHtml(article.title)}`       : '',
-            article.description ? `Body: ${stripHtml(article.description)}`  : '',
+            article.title       ? `Title: ${stripHtml(article.title)}`      : '',
+            article.description ? `Body: ${stripHtml(article.description)}` : '',
         ];
         return parts.filter(Boolean).join('\n').trim();
     }
@@ -196,13 +212,12 @@ export class GroqSummarizer {
             const parsed = this._parseJSON(raw);
             return parsed?.verdict || 'PASS';
         } catch {
-            return 'PASS'; // Verifier failure → don't block pipeline
+            return 'PASS';
         }
     }
 
     _parseJSON(raw) {
         try {
-            // Strip accidental markdown fences if model misbehaves
             const clean = raw
                 .replace(/^```(?:json)?\s*/i, '')
                 .replace(/\s*```$/,          '')
@@ -213,13 +228,11 @@ export class GroqSummarizer {
         }
     }
 
-    /** Rule-based fallback: first ~220 chars of plain-text description, no LLM */
     _fallback(article) {
         const text = stripHtml(article.description || article.title || '');
         return text.length > 220 ? text.slice(0, 217) + '…' : text;
     }
 
-    /** Format a date string as "Month YYYY" for the LLM context */
     _formatMonthYear(dateStr) {
         try {
             const d = new Date(dateStr);
