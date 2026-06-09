@@ -25,6 +25,17 @@ import { Deduplicator   } from './deduplicator.js';
 import { ImpactScorer   } from './scorer.js';
 import { GroqSummarizer } from './summarizer.js';
 
+/** Returns "YYYY-MM-DD" from any parseable date string; returns original string on failure */
+function _toDateOnly(dateStr) {
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d)) return dateStr;
+        return d.toISOString().slice(0, 10);
+    } catch {
+        return dateStr;
+    }
+}
+
 await Actor.init();
 const input = await Actor.getInput();
 
@@ -36,9 +47,10 @@ const {
     time_window       = '7d',
     intent_categories = [
         'expansion', 'mergers_acquisitions', 'product_launch',
-        'funding', 'partnership', 'compliance','leadership_change', 'layoffs',
-
+        'funding', 'partnership', 'compliance', 'leadership_change', 'layoffs', 'technology',
     ],
+    custom_intent     = '',   // optional custom keyword to search and classify
+    country           = '',   // optional country filter
     max_results       = 50,
     min_impact_score  = 3,
     language          = 'en',
@@ -106,12 +118,8 @@ log.info(`📅 Time window: ${time_window} | Categories: ${intent_categories.joi
 
 // ── Shared services ──────────────────────────────────────────────────────────
 
-const classifier = new EventClassifier(intent_categories);
+const classifier = new EventClassifier(intent_categories, custom_intent);
 const scorer     = new ImpactScorer();
-const summarizer = new GroqSummarizer({
-    apiKey: groq_api_key,
-    verify: groq_verify,
-});
 
 const dataset = await Actor.openDataset();
 const kvStore = await Actor.openKeyValueStore();
@@ -121,15 +129,28 @@ const kvStore = await Actor.openKeyValueStore();
 async function processCompany(targetCompany) {
     log.info(`\n─── Processing: "${targetCompany}" ───`);
 
+    // Per-company summarizer carries the company name for "In Month Year, Company..." formatting
+    const summarizer = new GroqSummarizer({
+        apiKey:      groq_api_key,
+        verify:      groq_verify,
+        companyName: targetCompany,
+    });
+
     // 1. COLLECT
-    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories });
+    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories, country, custom_intent });
     const rawArticles = await collector.collect();
     log.info(`  📡 Collected ${rawArticles.length} raw articles`);
 
-    // 2. DEDUPLICATE
-    const deduplicator  = new Deduplicator();
-    const uniqueArticles = deduplicator.deduplicate(rawArticles);
-    log.info(`  🗂  After dedup: ${uniqueArticles.length} unique articles`);
+    // 2. DEDUPLICATE — rule-based first, then LLM semantic pass
+    const deduplicator   = new Deduplicator();
+    let   uniqueArticles = deduplicator.deduplicate(rawArticles);
+    log.info(`  🗂  After rule dedup: ${uniqueArticles.length} unique articles`);
+
+    // LLM semantic dedup (runs only if Groq key is available)
+    if (groq_api_key || process.env.GROQ_API_KEY) {
+        uniqueArticles = await deduplicator.deduplicateWithLLM(uniqueArticles, summarizer.groqClient);
+    }
+    log.info(`  🗂  After LLM dedup: ${uniqueArticles.length} unique articles`);
 
     // 3. CLASSIFY + SCORE (filter first so we only summarise relevant articles)
     const classified = [];
@@ -150,23 +171,26 @@ async function processCompany(targetCompany) {
     const summaries  = await summarizer.summariseBatch(articles, 5);
 
     // 5. BUILD RECORDS
-    const results = classified.map(({ article, classification, impact }, i) => ({
-        company_name:        targetCompany,
-        event_type:          classification.event_type,
-        headline:            article.title,
-        // summary:             summaries[i] || article.description || '',
-        description:         article.description || '',
-        summary:             summaries[i] || '',
-        event_date:          article.publishedAt || article.date || null,
-        source:              article.source,
-        source_link:         article.url,
-        intent_signal:       impact.intent_signal,
-        event_impact_score:  impact.event_impact_score,
-        relevance_score:     article.relevanceScore ?? 0,
-        confidence:          classification.confidence,
-        keywords_matched:    classification.keywords_matched,
-        scraped_at:          new Date().toISOString(),
-    }));
+    const results = classified.map(({ article, classification, impact }, i) => {
+        const rawDate  = article.publishedAt || article.date || null;
+        const dateOnly = rawDate ? _toDateOnly(rawDate) : null;
+        return {
+            company_name:        targetCompany,
+            event_type:          classification.event_type,
+            headline:            article.title,
+            description:         article.description || '',
+            summary:             summaries[i] || '',
+            event_date:          dateOnly,
+            source:              article.source,
+            source_link:         article.url,
+            intent_signal:       impact.intent_signal,
+            event_impact_score:  impact.event_impact_score,
+            relevance_score:     article.relevanceScore ?? 0,
+            confidence:          classification.confidence,
+            keywords_matched:    classification.keywords_matched,
+            scraped_at:          new Date().toISOString().slice(0, 10),
+        };
+    });
 
     // Sort by impact score descending, respect per-company max_results cap
     const sorted = results
