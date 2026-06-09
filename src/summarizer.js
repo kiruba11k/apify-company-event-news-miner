@@ -39,13 +39,14 @@ STRICT RULES — follow every rule or your output is invalid:
 1. Use ONLY information explicitly stated in the ARTICLE TEXT provided by the user.
 2. Do NOT invent names, figures, dates, percentages, or any detail absent from the article.
 3. If the article text is insufficient to produce a confident summary, set "summary" to null and set "insufficient_data" to true.
-4. Your summary must be 2–3 sentences maximum.
+4. Your summary must be 1–2 sentences maximum.
 5. Do NOT add opinions, predictions, or background knowledge.
 6. Respond ONLY with a valid JSON object — no markdown fences, no preamble.
+7. CRITICAL FORMAT: The summary MUST begin with the time reference in the format "In [Month Year]," followed by the company name and the event. Example: "In March 2025, Acme Corp acquired XYZ Ltd for $500 million to expand its cloud services portfolio." If the exact month/year is not in the article, use the article date provided in ARTICLE_DATE.
 
 Output schema:
 {
-  "summary": "<2-3 sentence factual summary | null>",
+  "summary": "<1-2 sentence factual summary starting with 'In [Month Year], [Company]...' | null>",
   "key_facts": ["<fact 1 from article>", "<fact 2 from article>"],
   "insufficient_data": <true | false>
 }`;
@@ -63,15 +64,20 @@ Output schema:
 export class GroqSummarizer {
     /**
      * @param {object} options
-     * @param {string}  options.apiKey   — Groq API key (or set GROQ_API_KEY env var)
-     * @param {string}  [options.model]  — Groq model ID (default: llama3-70b-8192)
-     * @param {boolean} [options.verify] — run self-verification pass (default: false)
+     * @param {string}  options.apiKey      — Groq API key (or set GROQ_API_KEY env var)
+     * @param {string}  [options.model]     — Groq model ID (default: llama3-70b-8192)
+     * @param {boolean} [options.verify]    — run self-verification pass (default: false)
+     * @param {string}  [options.companyName] — company name to anchor summaries
      */
-    constructor({ apiKey, model = 'llama3-70b-8192', verify = false } = {}) {
-        this.client  = new Groq({ apiKey: apiKey || process.env.GROQ_API_KEY });
-        this.model   = model;
-        this.verify  = verify;
+    constructor({ apiKey, model = 'llama3-70b-8192', verify = false, companyName = '' } = {}) {
+        this.client      = new Groq({ apiKey: apiKey || process.env.GROQ_API_KEY });
+        this.model       = model;
+        this.verify      = verify;
+        this.companyName = companyName;
     }
+
+    /** Expose the underlying Groq client (used by Deduplicator LLM pass) */
+    get groqClient() { return this.client; }
 
     /**
      * Summarise a single article.
@@ -89,8 +95,11 @@ export class GroqSummarizer {
 
         const truncated = rawText.slice(0, MAX_INPUT_CHARS);
 
+        const articleDate = article.publishedAt || article.date || '';
+        const formattedDate = articleDate ? this._formatMonthYear(articleDate) : '';
+
         try {
-            const parsed = await this._callLLM(truncated);
+            const parsed = await this._callLLM(truncated, formattedDate, this.companyName);
 
             if (!parsed || parsed.insufficient_data || !parsed.summary) {
                 log.debug(`[GroqSummarizer] Insufficient data for: ${article.title}`);
@@ -146,16 +155,21 @@ export class GroqSummarizer {
         return parts.filter(Boolean).join('\n').trim();
     }
 
-    async _callLLM(articleText) {
+    async _callLLM(articleText, articleDate = '', companyName = '') {
+        const contextLines = [];
+        if (companyName) contextLines.push(`COMPANY: ${companyName}`);
+        if (articleDate) contextLines.push(`ARTICLE_DATE: ${articleDate}`);
+        const contextBlock = contextLines.length ? contextLines.join('\n') + '\n\n' : '';
+
         const response = await this.client.chat.completions.create({
             model:       this.model,
-            temperature: 0,           // deterministic — no creative drift
+            temperature: 0,
             max_tokens:  256,
             messages: [
                 { role: 'system', content: SYSTEM_PROMPT },
                 {
                     role: 'user',
-                    content: `ARTICLE TEXT:\n${articleText}\n\nProduce the JSON summary now.`,
+                    content: `${contextBlock}ARTICLE TEXT:\n${articleText}\n\nProduce the JSON summary now.`,
                 },
             ],
         });
@@ -203,5 +217,16 @@ export class GroqSummarizer {
     _fallback(article) {
         const text = stripHtml(article.description || article.title || '');
         return text.length > 220 ? text.slice(0, 217) + '…' : text;
+    }
+
+    /** Format a date string as "Month YYYY" for the LLM context */
+    _formatMonthYear(dateStr) {
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d)) return dateStr;
+            return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        } catch {
+            return dateStr;
+        }
     }
 }
