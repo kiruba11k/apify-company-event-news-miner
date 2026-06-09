@@ -36,7 +36,6 @@ function _toDateOnly(dateStr) {
     }
 }
 
-
 await Actor.init();
 const input = await Actor.getInput();
 
@@ -52,7 +51,6 @@ const {
     ],
     custom_intent     = '',   // optional custom keyword to search and classify
     country           = '',   // optional country filter
-    company_context   = '',   // optional disambiguator appended to all search queries
     max_results       = 50,
     min_impact_score  = 3,
     language          = 'en',
@@ -139,7 +137,7 @@ async function processCompany(targetCompany) {
     });
 
     // 1. COLLECT
-    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories, country, custom_intent, company_context });
+    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories, country, custom_intent });
     const rawArticles = await collector.collect();
     log.info(`  📡 Collected ${rawArticles.length} raw articles`);
 
@@ -147,6 +145,12 @@ async function processCompany(targetCompany) {
     const deduplicator   = new Deduplicator();
     let   uniqueArticles = deduplicator.deduplicate(rawArticles);
     log.info(`  🗂  After rule dedup: ${uniqueArticles.length} unique articles`);
+
+    // LLM semantic dedup (runs only if Groq key is available)
+    if (groq_api_key || process.env.GROQ_API_KEY) {
+        uniqueArticles = await deduplicator.deduplicateWithLLM(uniqueArticles, summarizer.groqClient);
+    }
+    log.info(`  🗂  After LLM dedup: ${uniqueArticles.length} unique articles`);
 
     // 3. CLASSIFY + SCORE (filter first so we only summarise relevant articles)
     const classified = [];
@@ -162,23 +166,12 @@ async function processCompany(targetCompany) {
 
     log.info(`  🔍 Classified: ${classified.length} relevant events`);
 
-    // 3b. POST-CLASSIFICATION DEDUP — Groq LLM when key available, heuristic fallback otherwise
-    let dedupedClassified;
-    if (groq_api_key || process.env.GROQ_API_KEY) {
-        dedupedClassified = await deduplicator.deduplicateClassifiedWithLLM(
-            classified, summarizer.groqClient, targetCompany
-        );
-    } else {
-        dedupedClassified = deduplicator.deduplicateClassified(classified, targetCompany);
-    }
-    log.info(`  🗂  After post-classification dedup: ${dedupedClassified.length} unique events (removed ${classified.length - dedupedClassified.length})`);
-
     // 4. SUMMARISE — batch call with concurrency=5
-    const articles   = dedupedClassified.map(c => c.article);
+    const articles   = classified.map(c => c.article);
     const summaries  = await summarizer.summariseBatch(articles, 5);
 
     // 5. BUILD RECORDS
-    const results = dedupedClassified.map(({ article, classification, impact }, i) => {
+    const results = classified.map(({ article, classification, impact }, i) => {
         const rawDate  = article.publishedAt || article.date || null;
         const dateOnly = rawDate ? _toDateOnly(rawDate) : null;
         return {
