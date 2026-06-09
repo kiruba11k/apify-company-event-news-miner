@@ -1,6 +1,21 @@
 /**
  * GroqSummarizer
- * ...
+ *
+ * Generates grounded, factual summaries using the Groq API (llama3-70b-8192).
+ *
+ * Anti-hallucination strategy:
+ *  1. STRICT GROUNDING  — model is told to use ONLY information present in the
+ *     provided article text. Any claim not in the source text is forbidden.
+ *  2. CONFIDENCE GATE   — if the article text is too short / ambiguous the
+ *     summarizer returns a fallback instead of guessing.
+ *  3. TEMPERATURE = 0   — deterministic output, no creative drift.
+ *  4. STRUCTURED OUTPUT — model must return a JSON object; free-form prose is
+ *     rejected so the caller can detect malformed responses.
+ *  5. SELF-VERIFICATION — a second lightweight Groq call checks the summary
+ *     against the source and flags any unsupported claims (optional, enabled
+ *     via `verify: true` in options).
+ *  6. FALLBACK CHAIN    — any error → rule-based excerpt → empty string.
+ *     The pipeline never blocks; summaries are always "best-effort".
  */
 
 import Groq from 'groq-sdk';
@@ -120,8 +135,8 @@ Respond ONLY with a JSON array of true/false values matching the order of the ar
             return this._fallback(article);
         }
 
-        const truncated    = rawText.slice(0, MAX_INPUT_CHARS);
-        const articleDate  = article.publishedAt || article.date || '';
+        const truncated     = rawText.slice(0, MAX_INPUT_CHARS);
+        const articleDate   = article.publishedAt || article.date || '';
         const formattedDate = articleDate ? this._formatMonthYear(articleDate) : '';
 
         try {
