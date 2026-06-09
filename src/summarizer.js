@@ -213,10 +213,29 @@ export class GroqSummarizer {
         }
     }
 
-    /** Rule-based fallback: first ~220 chars of plain-text description, no LLM */
+    /**
+     * Rule-based fallback — formats as "In [Month Year], [Company] [event]."
+     * Uses the article title as the event description when no LLM is available.
+     */
     _fallback(article) {
-        const text = stripHtml(article.description || article.title || '');
-        return text.length > 220 ? text.slice(0, 217) + '…' : text;
+        const rawDate = article.publishedAt || article.date || '';
+        const monthYear = rawDate ? this._formatMonthYear(rawDate) : '';
+        const company = this.companyName || '';
+        const title = stripHtml(article.title || '');
+        const desc  = stripHtml(article.description || '');
+
+        // Pick the richer of title vs description (skip if it's just a copy of the title)
+        const eventText = (desc && desc !== title && desc.length > title.length)
+            ? (desc.length > 200 ? desc.slice(0, 197) + '…' : desc)
+            : title;
+
+        if (monthYear && company) {
+            // Strip any leading "company - source" duplication common in RSS feeds
+            const cleaned = eventText.replace(new RegExp(`^${company}[\\s\\-–—:]+`, 'i'), '');
+            return `In ${monthYear}, ${company} ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`;
+        }
+        if (monthYear) return `In ${monthYear}, ${eventText}`;
+        return eventText.length > 220 ? eventText.slice(0, 217) + '…' : eventText;
     }
 
     /** Format a date string as "Month YYYY" for the LLM context */
