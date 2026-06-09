@@ -165,6 +165,28 @@ const CATEGORY_RULES = {
             'operational changes', 'organizational changes',
         ],
     },
+
+    technology: {
+        strong: [
+            'artificial intelligence', 'ai adoption', 'ai integration', 'machine learning',
+            'deep learning', 'generative ai', 'large language model', 'llm', 'gpt',
+            'digital transformation', 'digitization', 'digitalization',
+            'cloud migration', 'cloud adoption', 'cloud infrastructure',
+            'automation', 'automates', 'automated', 'robotic process automation', 'rpa',
+            'blockchain', 'web3', 'smart contract', 'iot', 'internet of things',
+            'cybersecurity', 'data breach', 'ransomware', 'zero trust',
+            'research and development', 'r&d investment', 'patent filed', 'patent granted',
+            'tech stack', 'infrastructure upgrade', 'platform migration', 'api integration',
+            'data analytics', 'big data', 'machine intelligence', 'neural network',
+            'quantum computing', 'edge computing', '5g deployment', 'digital strategy',
+            'technology investment', 'it modernization', 'devops', 'open source',
+        ],
+        supporting: [
+            'technology', 'tech', 'software', 'hardware', 'platform', 'digital',
+            'innovation', 'data', 'cloud', 'saas', 'api', 'developer', 'engineering',
+            'infrastructure', 'system', 'solution', 'algorithm', 'model', 'compute',
+        ],
+    },
 };
 
 // PR fluff patterns to REJECT
@@ -177,10 +199,15 @@ const FLUFF_PATTERNS = [
 ];
 
 export class EventClassifier {
-    constructor(enabledCategories = Object.keys(CATEGORY_RULES)) {
+    constructor(enabledCategories = Object.keys(CATEGORY_RULES), customIntent = '') {
         this.rules = {};
         for (const cat of enabledCategories) {
             if (CATEGORY_RULES[cat]) this.rules[cat] = CATEGORY_RULES[cat];
+        }
+        // Inject custom intent as a dynamic category
+        if (customIntent && customIntent.trim()) {
+            const terms = customIntent.trim().toLowerCase().split(/[\s,;]+/).filter(Boolean);
+            this.rules['custom'] = { strong: terms, supporting: [] };
         }
     }
 
