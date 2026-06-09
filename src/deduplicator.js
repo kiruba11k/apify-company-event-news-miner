@@ -13,7 +13,7 @@
 import { log } from 'apify';
 
 export class Deduplicator {
-    constructor(threshold = 0.65) {
+    constructor(threshold = 0.5) {
         this.threshold = threshold;
     }
 
@@ -48,11 +48,12 @@ export class Deduplicator {
     async deduplicateWithLLM(articles, groqClient, model = 'llama-3.3-70b-versatile') {
         if (articles.length <= 1) return articles;
 
-        // Process in chunks of 40 to avoid exceeding token limits
-        const CHUNK = 40;
+        // Process in chunks of 20 to stay under free-tier TPM limits
+        const CHUNK = 20;
         const globalToRemove = new Set();
 
         for (let start = 0; start < articles.length; start += CHUNK) {
+            if (start > 0) await new Promise(r => setTimeout(r, 1000)); // pace between chunks
             const chunk       = articles.slice(start, start + CHUNK);
             const chunkGroups = await this._llmDeduplicateChunk(chunk, groqClient, model);
 
@@ -104,25 +105,35 @@ Output schema:
 
 Each inner array = 1-based indices of headlines covering the same event. Return empty array if no duplicates.`;
 
-        try {
-            const response = await groqClient.chat.completions.create({
-                model,
-                temperature: 0,
-                max_tokens:  768,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user',   content: `HEADLINES:\n${headlineList}\n\nIdentify semantic duplicate groups now.` },
-                ],
-            });
+        for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+                const response = await groqClient.chat.completions.create({
+                    model,
+                    temperature: 0,
+                    max_tokens:  768,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user',   content: `HEADLINES:\n${headlineList}\n\nIdentify semantic duplicate groups now.` },
+                    ],
+                });
 
-            const raw    = response.choices?.[0]?.message?.content || '';
-            const parsed = this._parseJSON(raw);
-            return parsed?.duplicate_groups || [];
+                const raw    = response.choices?.[0]?.message?.content || '';
+                const parsed = this._parseJSON(raw);
+                return parsed?.duplicate_groups || [];
 
-        } catch (err) {
-            log.warning(`[Deduplicator] LLM dedup chunk failed: ${err.message}`);
-            return [];
+            } catch (err) {
+                const is429 = err.status === 429 || (err.message && err.message.includes('rate_limit_exceeded'));
+                if (is429 && attempt < 3) {
+                    const waitMs = Math.pow(2, attempt + 1) * 1000;
+                    log.debug(`[Deduplicator] Rate-limited, waiting ${waitMs}ms before retry ${attempt + 1}/3`);
+                    await new Promise(r => setTimeout(r, waitMs));
+                    continue;
+                }
+                log.warning(`[Deduplicator] LLM dedup chunk failed: ${err.message}`);
+                return [];
+            }
         }
+        return [];
     }
 
     _normalizeUrl(url = '') {
