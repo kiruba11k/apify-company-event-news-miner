@@ -36,59 +36,6 @@ function _toDateOnly(dateStr) {
     }
 }
 
-/**
- * Post-classification dedup: within each event_type group, collapse articles
- * that are clearly about the same event (Jaccard on title words, threshold 0.28).
- * Keeps the highest-scored article per cluster.
- */
-function deduplicateClassified(classified) {
-    const threshold = 0.28;
-
-    function tokenize(text) {
-        return new Set(
-            text.toLowerCase()
-                .replace(/[^a-z0-9\s]/g, ' ')
-                .split(/\s+/)
-                .filter(w => w.length > 2)
-        );
-    }
-
-    function jaccard(a, b) {
-        const intersection = new Set([...a].filter(w => b.has(w)));
-        const union = new Set([...a, ...b]);
-        return union.size === 0 ? 0 : intersection.size / union.size;
-    }
-
-    // Group by event_type first — only dedup within the same category
-    const byType = new Map();
-    for (const item of classified) {
-        const t = item.classification.event_type;
-        if (!byType.has(t)) byType.set(t, []);
-        byType.get(t).push(item);
-    }
-
-    const kept = [];
-    for (const group of byType.values()) {
-        const clusters = [];
-        for (const item of group) {
-            const words = tokenize(item.article.title);
-            const match = clusters.find(c =>
-                jaccard(words, tokenize(c.best.article.title)) >= threshold
-            );
-            if (match) {
-                // Keep the higher-scored article in the cluster
-                if (item.impact.event_impact_score > match.best.impact.event_impact_score) {
-                    match.best = item;
-                }
-            } else {
-                clusters.push({ best: item });
-            }
-        }
-        kept.push(...clusters.map(c => c.best));
-    }
-
-    return kept;
-}
 
 await Actor.init();
 const input = await Actor.getInput();
@@ -200,12 +147,6 @@ async function processCompany(targetCompany) {
     let   uniqueArticles = deduplicator.deduplicate(rawArticles);
     log.info(`  🗂  After rule dedup: ${uniqueArticles.length} unique articles`);
 
-    // LLM semantic dedup (runs only if Groq key is available)
-    if (groq_api_key || process.env.GROQ_API_KEY) {
-        uniqueArticles = await deduplicator.deduplicateWithLLM(uniqueArticles, summarizer.groqClient);
-    }
-    log.info(`  🗂  After LLM dedup: ${uniqueArticles.length} unique articles`);
-
     // 3. CLASSIFY + SCORE (filter first so we only summarise relevant articles)
     const classified = [];
     for (const article of uniqueArticles) {
@@ -220,8 +161,15 @@ async function processCompany(targetCompany) {
 
     log.info(`  🔍 Classified: ${classified.length} relevant events`);
 
-    // 3b. POST-CLASSIFICATION DEDUP — collapse same-event articles within each category
-    const dedupedClassified = deduplicateClassified(classified);
+    // 3b. POST-CLASSIFICATION DEDUP — Groq LLM when key available, heuristic fallback otherwise
+    let dedupedClassified;
+    if (groq_api_key || process.env.GROQ_API_KEY) {
+        dedupedClassified = await deduplicator.deduplicateClassifiedWithLLM(
+            classified, summarizer.groqClient, targetCompany
+        );
+    } else {
+        dedupedClassified = deduplicator.deduplicateClassified(classified, targetCompany);
+    }
     log.info(`  🗂  After post-classification dedup: ${dedupedClassified.length} unique events (removed ${classified.length - dedupedClassified.length})`);
 
     // 4. SUMMARISE — batch call with concurrency=5
