@@ -54,7 +54,8 @@
                     "partnership",
                     "compliance",
                     "leadership_change",
-                    "layoffs"
+                    "layoffs",
+                    "technology"
                 ],
                 "enumTitles": [
                     "Expansion (organic growth, new markets, new offices)",
@@ -62,10 +63,10 @@
                     "Product Launch",
                     "Funding Rounds",
                     "Partnership / Deals",
-                    
                     "Compliance / Legal",
                     "Leadership Change (CEO, board, executive appointments/exits)",
-                    "Layoffs & Restructuring"
+                    "Layoffs & Restructuring",
+                    "Technology (AI, digital transformation, tech adoption, R&D)"
                 ]
             },
             "default": [
@@ -76,8 +77,25 @@
                 "partnership",
                 "compliance",
                 "leadership_change",
-                "layoffs"
+                "layoffs",
+                "technology"
             ]
+        },
+
+        "custom_intent": {
+            "title": "Custom Intent / Search Term (optional)",
+            "type": "string",
+            "description": "Add a custom keyword or phrase to search for that is not covered by the Intent Categories above (e.g. 'sustainability', 'ESG', 'supply chain'). Leave blank to skip.",
+            "editor": "textfield",
+            "example": "sustainability"
+        },
+
+        "country": {
+            "title": "Country Filter (optional)",
+            "type": "string",
+            "description": "Restrict news to a specific country. Use a full country name or ISO code (e.g. 'United States', 'UK', 'Germany', 'IN'). Leave blank for global results.",
+            "editor": "textfield",
+            "example": "United Kingdom"
         },
 
         "max_results": {
