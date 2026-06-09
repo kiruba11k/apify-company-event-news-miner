@@ -221,8 +221,8 @@ export class EventClassifier {
         let bestScore = 0;
 
         for (const [event_type, { strong, supporting }] of Object.entries(this.rules)) {
-            const strongMatches    = strong.filter(kw => text.includes(kw));
-            const supportingMatches = supporting.filter(kw => text.includes(kw));
+            const strongMatches    = strong.filter(kw => this._matches(text, kw));
+            const supportingMatches = supporting.filter(kw => this._matches(text, kw));
 
             if (strongMatches.length === 0) continue;
 
@@ -239,6 +239,12 @@ export class EventClassifier {
         }
 
         return bestMatch;
+    }
+    // Word-boundary match — prevents short keywords matching mid-word substrings
+    // e.g. 'spac' must not match 'aerospace', 'bid' must not match 'forbid'
+    _matches(text, kw) {
+        const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`\\b${escaped}`, 'i').test(text);
     }
 
     _confidence(strong, supporting) {
