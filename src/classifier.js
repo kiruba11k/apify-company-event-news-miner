@@ -42,7 +42,7 @@ const CATEGORY_RULES = {
             'acqui', 'acquires', 'acquired', 'acquisition', 'merger', 'merges',
             'merged with', 'takeover', 'buyout', 'buy out', 'purchased',
             'ipo', 'went public', 'listed on', 'initial public offering',
-            'spac', 'reverse merger', 'going public', 'stock market debut',
+'            reverse merger', 'going public', 'stock market debut',            
             'hostile takeover', 'friendly takeover', 'strategic acquisition',
             'divest', 'divestiture', 'spin-off', 'spinoff', 'carve-out',
             'agreed to buy', 'agreed to acquire', 'deal to buy', 'deal to acquire',
