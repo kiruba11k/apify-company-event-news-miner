@@ -104,31 +104,44 @@ ${numbered}
 
 Respond ONLY with a JSON array of true/false values matching the order of the articles. Example for 3 articles: [true, false, true]`;
 
-            try {
-                const response = await this.client.chat.completions.create({
-                    model:       this.model,
-                    temperature: 0,
-                    max_tokens:  64,
-                    messages: [{ role: 'user', content: prompt }],
-                });
-                const raw   = (response.choices?.[0]?.message?.content || '').trim();
-                const flags = this._parseJSON(raw);
+            let filterDone = false;
+            for (let attempt = 0; attempt < 4 && !filterDone; attempt++) {
+                try {
+                    const response = await this.client.chat.completions.create({
+                        model:       this.model,
+                        temperature: 0,
+                        max_tokens:  64,
+                        messages: [{ role: 'user', content: prompt }],
+                    });
+                    const raw   = (response.choices?.[0]?.message?.content || '').trim();
+                    const flags = this._parseJSON(raw);
 
-                if (Array.isArray(flags) && flags.length === batch.length) {
-                    batch.forEach((a, idx) => { if (flags[idx]) kept.push(a); });
-                } else {
+                    if (Array.isArray(flags) && flags.length === batch.length) {
+                        batch.forEach((a, idx) => { if (flags[idx]) kept.push(a); });
+                    } else {
+                        kept.push(...batch);
+                    }
+                    filterDone = true;
+                } catch (err) {
+                    const is429 = err.status === 429 || (err.message && err.message.includes('rate_limit_exceeded'));
+                    if (is429 && attempt < 3) {
+                        const waitMs = Math.pow(2, attempt + 1) * 1000;
+                        await new Promise(r => setTimeout(r, waitMs));
+                        continue;
+                    }
+                    log.warning(`[GroqSummarizer] Entity filter error: ${err.message} — keeping batch as-is`);
                     kept.push(...batch);
+                    filterDone = true;
                 }
-            } catch (err) {
-                log.warning(`[GroqSummarizer] Entity filter error: ${err.message} — keeping batch as-is`);
-                kept.push(...batch);
             }
+            // Small delay between entity filter batches
+            if (i + BATCH < articles.length) await new Promise(r => setTimeout(r, 300));
         }
 
         return kept;
     }
 
-    async summarise(article) {
+    async summarise(article, retries = 4) {
         const rawText = this._buildArticleText(article);
 
         if (rawText.length < MIN_TEXT_LENGTH) {
@@ -139,31 +152,48 @@ Respond ONLY with a JSON array of true/false values matching the order of the ar
         const articleDate   = article.publishedAt || article.date || '';
         const formattedDate = articleDate ? this._formatMonthYear(articleDate) : '';
 
-        try {
-            const parsed = await this._callLLM(truncated, formattedDate, this.companyName);
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                const parsed = await this._callLLM(truncated, formattedDate, this.companyName);
 
-            if (!parsed || parsed.insufficient_data || !parsed.summary) {
-                log.debug(`[GroqSummarizer] Insufficient data for: ${article.title}`);
-                return this._fallback(article);
-            }
-
-            if (this.verify) {
-                const verdict = await this._verify(truncated, parsed.summary);
-                if (verdict === 'FAIL') {
-                    log.warning(`[GroqSummarizer] Hallucination detected — using fallback for: ${article.title}`);
+                if (!parsed || parsed.insufficient_data || !parsed.summary) {
+                    log.debug(`[GroqSummarizer] Insufficient data for: ${article.title}`);
                     return this._fallback(article);
                 }
+
+                if (this.verify) {
+                    const verdict = await this._verify(truncated, parsed.summary);
+                    if (verdict === 'FAIL') {
+                        log.warning(`[GroqSummarizer] Hallucination detected — using fallback for: ${article.title}`);
+                        return this._fallback(article);
+                    }
+                }
+
+                return parsed.summary.trim();
+
+            } catch (err) {
+                const is429 = err.status === 429 || (err.message && err.message.includes('rate_limit_exceeded'));
+                if (is429 && attempt < retries) {
+                    // Parse retry-after from error message if available, otherwise exponential backoff
+                    let waitMs = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s, 16s
+                    const retryMatch = err.message && err.message.match(/Please try again in ([\d.]+)(ms|s)/i);
+                    if (retryMatch) {
+                        const val  = parseFloat(retryMatch[1]);
+                        const unit = retryMatch[2].toLowerCase();
+                        waitMs = Math.max(waitMs, unit === 'ms' ? val : val * 1000);
+                    }
+                    log.debug(`[GroqSummarizer] Rate-limited, waiting ${waitMs}ms before retry ${attempt + 1}/${retries}`);
+                    await new Promise(r => setTimeout(r, waitMs));
+                    continue;
+                }
+                log.warning(`[GroqSummarizer] LLM error for "${article.title}": ${err.message}`);
+                return this._fallback(article);
             }
-
-            return parsed.summary.trim();
-
-        } catch (err) {
-            log.warning(`[GroqSummarizer] LLM error for "${article.title}": ${err.message}`);
-            return this._fallback(article);
         }
+        return this._fallback(article);
     }
 
-    async summariseBatch(articles, concurrency = 5) {
+    async summariseBatch(articles, concurrency = 2) {
         const results = new Array(articles.length).fill('');
         const queue   = articles.map((a, i) => ({ article: a, index: i }));
 
@@ -171,6 +201,8 @@ Respond ONLY with a JSON array of true/false values matching the order of the ar
             while (queue.length > 0) {
                 const { article, index } = queue.shift();
                 results[index] = await this.summarise(article);
+                // Small delay between requests to stay under TPM limit
+                if (queue.length > 0) await new Promise(r => setTimeout(r, 500));
             }
         };
 
