@@ -45,7 +45,7 @@ export class Deduplicator {
      * that cover the same news event by meaning/context, not just wording.
      * Keeps the richest article per group.
      */
-    async deduplicateWithLLM(articles, groqClient, model = 'llama3-70b-8192') {
+    async deduplicateWithLLM(articles, groqClient, model = 'llama-3.3-70b-versatile') {
         if (articles.length <= 1) return articles;
 
         // Process in chunks of 40 to avoid exceeding token limits
