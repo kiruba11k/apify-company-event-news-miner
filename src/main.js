@@ -151,7 +151,13 @@ async function processCompany(targetCompany) {
         uniqueArticles = await deduplicator.deduplicateWithLLM(uniqueArticles, summarizer.groqClient);
     }
     log.info(`  🗂  After LLM dedup: ${uniqueArticles.length} unique articles`);
-
+    // 2b. ENTITY FILTER — use Groq to drop articles about a different entity
+    //     that shares the company name (e.g. Leonardo Hotels, Leonardo DiCaprio)
+    if (groq_api_key || process.env.GROQ_API_KEY) {
+        const beforeEntity = uniqueArticles.length;
+        uniqueArticles = await summarizer.filterByEntityRelevance(uniqueArticles, targetCompany);
+        log.info(`  🔎 After entity filter: ${uniqueArticles.length} / ${beforeEntity} articles kept`);
+    }
     // 3. CLASSIFY + SCORE (filter first so we only summarise relevant articles)
     const classified = [];
     for (const article of uniqueArticles) {
