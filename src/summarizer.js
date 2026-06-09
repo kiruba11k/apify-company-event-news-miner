@@ -162,10 +162,18 @@ Respond ONLY with a JSON array of true/false values matching the order of the ar
                 }
 
                 if (this.verify) {
-                    const verdict = await this._verify(truncated, parsed.summary);
-                    if (verdict === 'FAIL') {
-                        log.warning(`[GroqSummarizer] Hallucination detected — using fallback for: ${article.title}`);
-                        return this._fallback(article);
+                    // Skip verification when the article body is essentially just the title
+                    // (e.g. Google News RSS). Any real summary would be flagged as hallucination
+                    // because there is no body text to verify against.
+                    const bodyText  = stripHtml(article.description || '');
+                    const titleText = stripHtml(article.title || '');
+                    const bodyBeyondTitle = bodyText.replace(titleText, '').trim();
+                    if (bodyBeyondTitle.length >= 80) {
+                        const verdict = await this._verify(truncated, parsed.summary);
+                        if (verdict === 'FAIL') {
+                            log.warning(`[GroqSummarizer] Hallucination detected — using fallback for: ${article.title}`);
+                            return this._fallback(article);
+                        }
                     }
                 }
 
