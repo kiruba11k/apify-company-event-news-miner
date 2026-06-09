@@ -58,16 +58,23 @@ const CATEGORY_QUERY_TERMS = {
     compliance:          'regulation OR compliance OR lawsuit OR fine OR penalty OR approval OR settlement',
     leadership_change:   'CEO OR "chief executive" OR appoints OR "new president" OR "board of directors" OR "executive"',
     layoffs:             'layoffs OR "job cuts" OR restructuring OR "workforce reduction" OR redundancies OR downsizing',
+    technology:          '"artificial intelligence" OR "digital transformation" OR "machine learning" OR automation OR "cloud migration" OR cybersecurity OR "R&D" OR blockchain',
 };
 
 export class NewsCollector {
-    constructor({ company_name, time_window, language = 'en', intent_categories = [] }) {
+    constructor({ company_name, time_window, language = 'en', intent_categories = [], country = '', custom_intent = '' }) {
         this.company_name = company_name;
         this.days = TIME_WINDOW_MAP[time_window] ?? 7;
         this.language = language;
         this.intent_categories = intent_categories;
+        this.country = country ? country.trim() : '';
+        this.custom_intent = custom_intent ? custom_intent.trim() : '';
         this.cutoff = new Date(Date.now() - this.days * 86_400_000);
-        this.encodedQuery = encodeURIComponent(`"${company_name}"`);
+        // Build base query — optionally append country to narrow results
+        const baseQuery = this.country
+            ? `"${company_name}" ${this.country}`
+            : `"${company_name}"`;
+        this.encodedQuery = encodeURIComponent(baseQuery);
         this.nameVariants = this._buildNameVariants(company_name);
 
         this.apiKeys = {
@@ -196,15 +203,25 @@ export class NewsCollector {
             ? this.intent_categories
             : Object.keys(CATEGORY_QUERY_TERMS);
 
-        const results = await Promise.allSettled(
-            categories.map(cat => {
-                const terms = CATEGORY_QUERY_TERMS[cat];
-                if (!terms) return Promise.resolve([]);
-                const q = encodeURIComponent(`"${this.company_name}" (${terms})`);
-                const url = `https://news.google.com/rss/search?q=${q}&hl=${this.language}&gl=US&ceid=US:${this.language}`;
-                return this._parseRSS(url, `Google News / ${cat}`);
-            })
-        );
+        const countryClause = this.country ? ` ${this.country}` : '';
+
+        // Build task list — one per category + optional custom intent
+        const tasks = categories.map(cat => {
+            const terms = CATEGORY_QUERY_TERMS[cat];
+            if (!terms) return Promise.resolve([]);
+            const q = encodeURIComponent(`"${this.company_name}"${countryClause} (${terms})`);
+            const url = `https://news.google.com/rss/search?q=${q}&hl=${this.language}&gl=US&ceid=US:${this.language}`;
+            return this._parseRSS(url, `Google News / ${cat}`);
+        });
+
+        // Additional query for custom intent keyword
+        if (this.custom_intent) {
+            const q = encodeURIComponent(`"${this.company_name}"${countryClause} ${this.custom_intent}`);
+            const url = `https://news.google.com/rss/search?q=${q}&hl=${this.language}&gl=US&ceid=US:${this.language}`;
+            tasks.push(this._parseRSS(url, 'Google News / custom'));
+        }
+
+        const results = await Promise.allSettled(tasks);
 
         const articles = [];
         for (const r of results) {
