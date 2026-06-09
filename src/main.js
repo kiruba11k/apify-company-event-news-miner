@@ -52,6 +52,7 @@ const {
     ],
     custom_intent     = '',   // optional custom keyword to search and classify
     country           = '',   // optional country filter
+    company_context   = '',   // optional disambiguator appended to all search queries
     max_results       = 50,
     min_impact_score  = 3,
     language          = 'en',
@@ -138,7 +139,7 @@ async function processCompany(targetCompany) {
     });
 
     // 1. COLLECT
-    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories, country, custom_intent });
+    const collector   = new NewsCollector({ company_name: targetCompany, time_window, language, intent_categories, country, custom_intent, company_context });
     const rawArticles = await collector.collect();
     log.info(`  📡 Collected ${rawArticles.length} raw articles`);
 
