@@ -126,8 +126,6 @@
             "default": "en"
         },
 
-
-
         "groq_verify": {
             "title": "Enable Groq Self-Verification",
             "type": "boolean",
