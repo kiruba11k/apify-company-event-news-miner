@@ -98,6 +98,14 @@
             "example": "United Kingdom"
         },
 
+        "company_context": {
+            "title": "Company Context / Disambiguator (optional)",
+            "type": "string",
+            "description": "Extra keywords added to every search query to disambiguate the company from others with similar names. For example, enter 'aerospace defense' for Leonardo S.p.A. to avoid results about Leonardo DiCaprio or Leonardo Hotels. Leave blank if the company name is unique enough.",
+            "editor": "textfield",
+            "example": "aerospace defense"
+        },
+
         "max_results": {
             "title": "Max Results (per company)",
             "type": "integer",
